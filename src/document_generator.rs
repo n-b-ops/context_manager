@@ -20,8 +20,20 @@ pub struct DocumentGenerator {
 
 impl DocumentGenerator {
     pub fn new(directory: PathBuf, selected_files: Vec<PathBuf>) -> Self {
+        // On Windows, `canonicalize` may return paths using the extended-length ("\\?\\") prefix
+        // while the user-provided `directory` may *not* include it. This mismatch causes
+        // `strip_prefix` to fail later when we attempt to derive relative paths.
+        //
+        // To avoid this, we canonicalise the directory at construction time. If canonicalisation
+        // fails for any reason (e.g. the directory vanished between calls, permission issues), we
+        // fall back to the original path so we don't change previous behaviour.
+        let canonical_dir = match directory.canonicalize() {
+            Ok(p) => p,
+            Err(_) => directory.clone(),
+        };
+
         Self {
-            directory,
+            directory: canonical_dir,
             selected_files: selected_files.into_iter().collect(),
         }
     }
