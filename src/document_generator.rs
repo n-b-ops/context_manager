@@ -6,7 +6,7 @@ use tempfile::NamedTempFile;
 use log::{debug, warn};
 
 use crate::constants::{
-    MARKDOWN_HEADER_CONTEXT, MARKDOWN_HEADER_STRUCTURE, MARKDOWN_HEADER_FILES, MARKDOWN_CODE_BLOCK,
+    MARKDOWN_HEADER_CONTEXT, MARKDOWN_HEADER_STRUCTURE, MARKDOWN_HEADER_FILES,
     ADOC_SECTION_LEVEL_1, ADOC_SECTION_LEVEL_2, ADOC_SECTION_LEVEL_3, ADOC_SOURCE_BLOCK_DELIMITER,
     OutputFormat
 };
@@ -70,7 +70,6 @@ impl DocumentGenerator {
         match format {
             OutputFormat::Markdown => {
                 structure_content.push_str(&format!("{}\n", MARKDOWN_HEADER_STRUCTURE));
-                structure_content.push_str(&format!("{}\n", MARKDOWN_CODE_BLOCK));
                 
                 let mut structure_lines = String::new();
                 let mut is_last_child_stack = Vec::new();
@@ -85,8 +84,13 @@ impl DocumentGenerator {
                     format
                 )?;
                 
+                // Filenames may contain backticks, so size the fence dynamically here
+                // too (plain "text" language keeps renderers from guessing).
+                let fence_len = markdown_fence_len(&structure_lines);
+                let fence = "`".repeat(fence_len);
+                structure_content.push_str(&format!("{}text\n", fence));
                 structure_content.push_str(&structure_lines);
-                structure_content.push_str(&format!("{}", MARKDOWN_CODE_BLOCK));
+                structure_content.push_str(&fence);
             },
             OutputFormat::Adoc => {
                 structure_content.push_str(&format!("{} {}\n", ADOC_SECTION_LEVEL_2, "Project Structure"));
@@ -153,13 +157,16 @@ impl DocumentGenerator {
         
         match format {
             OutputFormat::Markdown => {
+                // The fence must be strictly longer than any backtick run inside the
+                // content, otherwise an inner fence would close the wrapper early.
+                let fence_len = markdown_fence_len(&content);
+                let fence = "`".repeat(fence_len);
                 Ok(format!(
-                    "### {}\n\n{}{}\n{}\n{}",
+                    "### `{}`\n\n{}markdown\n{}\n{}",
                     display_path,
-                    MARKDOWN_CODE_BLOCK,
-                    extension,
+                    fence,
                     content,
-                    MARKDOWN_CODE_BLOCK
+                    fence
                 ))
             },
             OutputFormat::Adoc => {
@@ -276,9 +283,12 @@ impl DocumentGenerator {
 
         match String::from_utf8(bytes) {
             Ok(content) => {
-                // Sanitize content to prevent markdown issues
+                // Markdown output preserves the file byte-for-byte: fence safety comes
+                // from choosing a long enough outer fence (see `markdown_fence_len`),
+                // not from escaping, which would corrupt the content. AsciiDoc source
+                // blocks cannot be length-escaped, so the delimiter is escaped there.
                 let sanitized = match format {
-                    OutputFormat::Markdown => content.replace("```", r"\`\`\`"),
+                    OutputFormat::Markdown => content.to_string(),
                     OutputFormat::Adoc => content.replace("----", "\\----"),
                 };
                 Ok(sanitized.trim().to_string())
@@ -288,7 +298,7 @@ impl DocumentGenerator {
                 let bytes = e.into_bytes();
                 let content = String::from_utf8_lossy(&bytes);
                 let sanitized = match format {
-                    OutputFormat::Markdown => content.replace("```", r"\`\`\`"),
+                    OutputFormat::Markdown => content.to_string(),
                     OutputFormat::Adoc => content.replace("----", "\\----"),
                 };
                 Ok(format!(
@@ -360,9 +370,10 @@ impl DocumentGenerator {
 
         let display_path = relative_path.to_string_lossy().replace('\\', "/");
 
-        // Determine the section header based on format
+        // Determine the section header based on format. Must stay in sync with
+        // the headings produced by `generate_file_string`.
         let section_header_prefix = match format {
-            OutputFormat::Markdown => format!("### {}", display_path),
+            OutputFormat::Markdown => format!("### `{}`", display_path),
             OutputFormat::Adoc => format!("{} {}", ADOC_SECTION_LEVEL_3, display_path),
         };
 
@@ -420,6 +431,22 @@ impl DocumentGenerator {
 
         Ok(())
     }
+}
+
+/// Computes the backtick fence length needed to safely wrap `content` in a
+/// fenced code block: one more than the longest backtick run anywhere in the
+/// content (three at minimum, per CommonMark). Scanning anywhere — not just
+/// line starts — is deliberately conservative: it also protects lax parsers
+/// and plain substring consumers (e.g. LLM prompt splitters) that do not
+/// honour the line-start rule. Tildes cannot close a backtick fence, so only
+/// backtick runs matter.
+fn markdown_fence_len(content: &str) -> usize {
+    let max_run = content
+        .split(|c| c != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    max_run.max(3 - 1) + 1
 }
 
 /// Strips Windows' extended-length ("verbatim") prefix from a path without
@@ -497,7 +524,7 @@ mod tests {
 
         let files = generator.generate_files_string(OutputFormat::Markdown).unwrap();
         assert!(
-            files.contains("### src_link/main.rs"),
+            files.contains("### `src_link/main.rs`"),
             "file behind the link must be rendered under the link-relative path; got:\n{}",
             files
         );
@@ -521,8 +548,124 @@ mod tests {
         );
 
         let files = generator.generate_files_string(OutputFormat::Markdown).unwrap();
-        assert!(!files.contains("### src/"), "directories must not be rendered as file sections");
+        assert!(!files.contains("### `src/`"), "directories must not be rendered as file sections");
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn nested_fences_get_longer_outer_fence_and_content_stays_verbatim() {
+        let root = write_fixture();
+        let nested = root.join("docs");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(
+            nested.join("adr.md"),
+            "# ADR\n```yaml\nprovisioning:\n  type: object\n```\n## Configuration\n```python\nx = 1\n```",
+        ).unwrap();
+
+        let generator = DocumentGenerator::new(root.clone(), vec![nested.join("adr.md")]);
+        let files = generator.generate_files_string(OutputFormat::Markdown).unwrap();
+
+        // Content must appear byte-for-byte: no escape sequences introduced
+        assert!(files.contains("```yaml\nprovisioning:"), "inner fence must survive unescaped");
+        assert!(!files.contains("\\`"), "no backslash-escaped backticks allowed");
+        // Outer fence is longer than any inner run (3) and uses the markdown tag
+        assert!(files.contains("\n````markdown\n"), "outer fence must be 4+ backticks");
+        assert!(files.ends_with("````"), "outer fence must close the section");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fence_length_scales_with_longest_backtick_run() {
+        assert_eq!(markdown_fence_len("plain text"), 3);
+        assert_eq!(markdown_fence_len("```yaml\na: 1\n```"), 4);
+        assert_eq!(markdown_fence_len("`````md\nx\n`````"), 6);
+        assert_eq!(markdown_fence_len("  \t````rust\nfn x() {}\n````"), 5);
+        // Runs anywhere count, even mid-line (conservative for lax consumers)
+        assert_eq!(markdown_fence_len("text ```inline``` text"), 4);
+        // Tildes cannot close a backtick fence
+        assert_eq!(markdown_fence_len("~~~\nnot a closer\n~~~"), 3);
+    }
+
+    #[test]
+    fn structure_block_uses_dynamic_fence_too() {
+        let root = write_fixture();
+        let tricky = root.join("we```ird.md");
+        std::fs::write(&tricky, "hello").unwrap();
+        let tree = crate::file_handler::FileHandler::with_options(root.clone(), true)
+            .unwrap()
+            .scan_directory(vec![])
+            .unwrap();
+        let generator = DocumentGenerator::new(root.clone(), vec![tricky]);
+        let structure = generator
+            .generate_structure_string(&tree, OutputFormat::Markdown)
+            .unwrap();
+        assert!(
+            structure.contains("\n````text\n"),
+            "structure fence must outsize the backticks in filenames; got:\n{}",
+            structure
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Full-pipeline check: generate a document containing nested fences and
+    /// nested-backtick filenames, then parse it with pulldown-cmark to prove
+    /// the structure holds: one code block per file, no content leakage into
+    /// the document outline.
+    #[test]
+    fn full_document_parses_with_commonmark_and_keeps_files_contained() {
+        use pulldown_cmark::{Parser, Event, Tag};
+
+        let root = write_fixture();
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(
+            docs.join("adr.md"),
+            "# ADR\n```yaml\nprovisioning:\n  type: object\n```\n## Configuration\ntext ```inline``` ticks",
+        ).unwrap();
+        std::fs::write(root.join("we```ird.md"), "odd name").unwrap();
+        let tree = crate::file_handler::FileHandler::with_options(root.clone(), true)
+            .unwrap()
+            .scan_directory(vec![])
+            .unwrap();
+        let generator = DocumentGenerator::new(
+            root.clone(),
+            vec![root.join("README.md"), docs.join("adr.md"), root.join("we```ird.md")],
+        );
+        let doc = generator
+            .generate_structure_string(&tree, OutputFormat::Markdown)
+            .unwrap()
+            + "\n\n"
+            + &generator.generate_files_string(OutputFormat::Markdown).unwrap();
+
+        let mut code_blocks = 0usize;
+        let mut headings = Vec::new();
+        let mut in_code = false;
+        for event in Parser::new(&doc) {
+            match event {
+                Event::Start(Tag::CodeBlock(_)) => { in_code = true; code_blocks += 1; }
+                Event::End(Tag::CodeBlock(_)) => in_code = false,
+                Event::Start(Tag::Heading(level, _, _)) => {
+                    assert!(!in_code, "heading opened while inside a code block");
+                    headings.push(level as u8);
+                }
+                Event::Text(t) if !in_code => {
+                    assert!(
+                        !t.contains("provisioning:"),
+                        "file content leaked outside code blocks: {}", t
+                    );
+                }
+                _ => {}
+            }
+        }
+        // 1 structure block + 3 file blocks
+        assert_eq!(code_blocks, 4, "exactly one fenced block per file plus structure");
+        assert_eq!(
+            headings.iter().filter(|&&l| l == 3).count(),
+            3,
+            "three file-path headings at level 3; got {:?}",
+            headings
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -539,7 +682,7 @@ mod tests {
         let generator = DocumentGenerator::new(root.clone(), vec![verbatim]);
         let files = generator.generate_files_string(OutputFormat::Markdown).unwrap();
         assert!(
-            files.contains("### README.md"),
+            files.contains("### `README.md`"),
             "verbatim-prefixed selection must still resolve relative to the directory; got:\n{}",
             files
         );

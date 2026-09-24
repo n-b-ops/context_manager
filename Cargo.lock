@@ -881,6 +881,7 @@ dependencies = [
  "ignore",
  "log",
  "notify",
+ "pulldown-cmark",
  "rfd",
  "tempfile",
  "thiserror",
@@ -2864,6 +2865,17 @@ name = "profiling"
 version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afbdc74edc00b6f6a218ca6a5364d6226a259d4b8ea1af4a0ea063f27e179f4d"
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57206b407293d2bcd3af849ce869d52068623f19e1b5ff8e8778e3309439682b"
+dependencies = [
+ "bitflags 2.9.1",
+ "memchr",
+ "unicase",
+]
 
 [[package]]
 name = "quick-xml"

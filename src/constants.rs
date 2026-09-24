@@ -3,7 +3,6 @@ use std::time::Duration;
 pub const MARKDOWN_HEADER_CONTEXT: &str = "# Context";
 pub const MARKDOWN_HEADER_STRUCTURE: &str = "## Project Structure";
 pub const MARKDOWN_HEADER_FILES: &str = "## Files";
-pub const MARKDOWN_CODE_BLOCK: &str = "```";
 
 pub const DEBOUNCE_DURATION: Duration = Duration::from_millis(750); // Slightly longer debounce
 pub const UI_STATUS_MESSAGE_DURATION: Duration = Duration::from_secs(5); 

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 build = "build.rs"
 
+[dev-dependencies]
+# Markdown structure validation in tests (fence safety regression checks)
+pulldown-cmark = { version = "0.9", default-features = false }
+
 [dependencies]
 # GUI Framework
 eframe = { version = "0.27", features = ["default_fonts", "glow", "wgpu", "x11"] }
