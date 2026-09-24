@@ -20,21 +20,20 @@ pub struct DocumentGenerator {
 
 impl DocumentGenerator {
     pub fn new(directory: PathBuf, selected_files: Vec<PathBuf>) -> Self {
-        // On Windows, `canonicalize` may return paths using the extended-length ("\\?\\") prefix
-        // while the user-provided `directory` may *not* include it. This mismatch causes
-        // `strip_prefix` to fail later when we attempt to derive relative paths.
-        //
-        // To avoid this, we canonicalise the directory at construction time. If canonicalisation
-        // fails for any reason (e.g. the directory vanished between calls, permission issues), we
-        // fall back to the original path so we don't change previous behaviour.
-        let canonical_dir = match directory.canonicalize() {
-            Ok(p) => p,
-            Err(_) => directory.clone(),
-        };
+        // The generator must NOT resolve paths (canonicalize): doing so collapses
+        // symlink/junction branches onto their targets and breaks `strip_prefix` for
+        // selections that live on a linked branch. Both the directory and the selected
+        // files originate from the same scan and therefore share the same root string;
+        // the only normalization applied is stripping Windows' verbatim (`\\?\`)
+        // prefix, which never resolves links.
+        let directory = strip_verbatim_prefix(directory);
 
         Self {
-            directory: canonical_dir,
-            selected_files: selected_files.into_iter().collect(),
+            directory,
+            selected_files: selected_files
+                .into_iter()
+                .map(strip_verbatim_prefix)
+                .collect(),
         }
     }
 
@@ -123,6 +122,14 @@ impl DocumentGenerator {
         sorted_files.sort();
         
         for (i, file_path) in sorted_files.iter().enumerate() {
+            // A directory can end up in the selection when symlinks are disabled and
+            // a linked directory scans as a file-like node, or when a selected path
+            // was replaced by a directory after scanning. Reading it would fail and
+            // abort the whole document, so skip such entries instead.
+            if file_path.is_dir() {
+                warn!("Skipping selected path that is a directory: {:?}", file_path);
+                continue;
+            }
             if i > 0 {
                 content.push_str("\n\n");
             }
@@ -413,4 +420,129 @@ impl DocumentGenerator {
 
         Ok(())
     }
-} 
+}
+
+/// Strips Windows' extended-length ("verbatim") prefix from a path without
+/// resolving symlinks. No-op on paths without the prefix and on non-Windows
+/// platforms where the prefix cannot occur.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    if let Some(stripped) = text.strip_prefix(r"\\?\") {
+        if let Some(parsed) = Path::new(stripped).to_str() {
+            return PathBuf::from(parsed);
+        }
+    }
+    path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_fixture() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "cb_gen_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("main.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("README.md"), "# Project").unwrap();
+        root
+    }
+
+    fn scan(root: &Path) -> crate::file_handler::FileNode {
+        crate::file_handler::FileHandler::with_options(root.to_path_buf(), true)
+            .unwrap()
+            .scan_directory(vec![])
+            .unwrap()
+    }
+
+    #[test]
+    fn generates_document_for_selection_behind_dir_link() {
+        let root = write_fixture();
+        let link = root.join("src_link");
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(root.join("src"), &link).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(root.join("src"), &link)
+            .map(|_| ())
+            .or_else(|_| {
+                let output = std::process::Command::new("cmd")
+                    .args([
+                        "/c", "mklink", "/J",
+                        &link.display().to_string(),
+                        &root.join("src").display().to_string(),
+                    ])
+                    .output()
+                    .map(|o| o.status.success())?;
+                if output { Ok(()) } else { Err(std::io::Error::other("mklink failed")) }
+            })
+            .is_ok();
+        if !linked {
+            eprintln!("skipping: no permission to create directory links");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let tree = scan(&root);
+        let generator = DocumentGenerator::new(
+            root.clone(),
+            vec![link.join("main.rs")],
+        );
+
+        let files = generator.generate_files_string(OutputFormat::Markdown).unwrap();
+        assert!(
+            files.contains("### src_link/main.rs"),
+            "file behind the link must be rendered under the link-relative path; got:\n{}",
+            files
+        );
+
+        let structure = generator.generate_structure_string(&tree, OutputFormat::Markdown).unwrap();
+        assert!(
+            structure.contains("src_link/"),
+            "structure section must show the followed link directory; got:\n{}",
+            structure
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn skips_directory_selections_instead_of_failing() {
+        let root = write_fixture();
+        let generator = DocumentGenerator::new(
+            root.clone(),
+            vec![root.join("src")], // a directory, not a file
+        );
+
+        let files = generator.generate_files_string(OutputFormat::Markdown).unwrap();
+        assert!(!files.contains("### src/"), "directories must not be rendered as file sections");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn verbatim_prefix_is_stripped_not_resolved() {
+        let root = write_fixture();
+        // Simulate a verbatim-prefixed selection (as canonicalize would produce)
+        // without any real link: strip_verbatim_prefix must normalize it away.
+        let verbatim = if cfg!(windows) {
+            PathBuf::from(format!("\\\\?\\{}", root.join("README.md").display()))
+        } else {
+            root.join("README.md")
+        };
+        let generator = DocumentGenerator::new(root.clone(), vec![verbatim]);
+        let files = generator.generate_files_string(OutputFormat::Markdown).unwrap();
+        assert!(
+            files.contains("### README.md"),
+            "verbatim-prefixed selection must still resolve relative to the directory; got:\n{}",
+            files
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

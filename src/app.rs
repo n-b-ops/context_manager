@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
@@ -57,6 +57,7 @@ pub struct ContextBuilderApp {
     // UI state
     ui_tree_handler: UITreeHandler,
     ignore_patterns_text: String, // New field for mutable ignore patterns
+    follow_symlinks: bool, // whether scans descend into symlinks/junctions
     
     // Communication
     event_sender: mpsc::Sender<AppEvent>,
@@ -90,6 +91,7 @@ impl ContextBuilderApp {
             output_file_path: None,
             ui_tree_handler: UITreeHandler::new(),
             ignore_patterns_text: DEFAULT_IGNORE_PATTERNS_ARRAY.join("\n"), // Initialize with default patterns
+            follow_symlinks: true,
             event_sender,
             event_receiver,
             file_monitor,
@@ -150,8 +152,9 @@ impl ContextBuilderApp {
         
         // Start directory scan in background thread
         let sender = self.event_sender.clone();
+        let follow_symlinks = self.follow_symlinks;
         thread::spawn(move || {
-            let result = FileHandler::new(directory)
+            let result = FileHandler::with_options(directory, follow_symlinks)
                 .and_then(|handler| handler.scan_directory(ignore_patterns));
             
             if let Err(e) = sender.send(AppEvent::DirectoryScanComplete(result)) {
@@ -276,7 +279,16 @@ impl ContextBuilderApp {
         if let (Some(directory), Some(output_path)) = (&self.current_directory, &self.output_file_path) {
             let selected_files = self.ui_tree_handler.get_selected_files();
 
-            if selected_files.contains(&file_path) {
+            // File events arrive under the path the OS reported (typically the real
+            // path), while selections carry the walker path (which may run through a
+            // symlink/junction branch). Compare canonicalized forms so a change made
+            // through either name matches the selection.
+            let canonical_event_path = canonicalize_or_self(&file_path);
+            let matches_selection = selected_files
+                .iter()
+                .any(|selected| canonicalize_or_self(selected) == canonical_event_path);
+
+            if matches_selection {
                 let directory = directory.clone();
                 let sender = self.event_sender.clone();
                 let markdown_path = output_path.clone();
@@ -589,10 +601,16 @@ impl ContextBuilderApp {
                 
                 ui.add_space(8.0);
                 
-                if ui.button("Apply Patterns & Rescan").clicked() {
+                let follow_changed = ui
+                    .add(egui::Checkbox::new(&mut self.follow_symlinks, "Follow symlinks/junctions"))
+                    .on_hover_text("When enabled, scanning descends into symbolic links and Windows junctions, so files behind them appear in the tree and the document. Changing this rescans the current directory.")
+                    .changed();
+                
+                let apply_clicked = ui.button("Apply Patterns & Rescan").clicked();
+                if follow_changed || apply_clicked {
                     if let Some(dir) = self.current_directory.clone() {
                         self.open_directory(dir, self.ignore_patterns_text.lines().map(|s| s.to_string()).collect());
-                    } else {
+                    } else if apply_clicked {
                         self.set_error_message("Please select a directory first to apply ignore patterns.".to_string());
                     }
                 }
@@ -697,7 +715,7 @@ impl ContextBuilderApp {
             
             egui::Frame::none()
                 .fill(egui::Color32::from_rgb(240, 255, 240))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 150, 0)))
+                .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0, 150, 0)))
                 .inner_margin(egui::Margin::same(10.0))
                 .rounding(egui::Rounding::same(5.0))
                 .show(ui, |ui| {
@@ -713,7 +731,7 @@ impl ContextBuilderApp {
             
             egui::Frame::none()
                 .fill(egui::Color32::from_rgb(255, 240, 240))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(200, 0, 0)))
+                .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(200, 0, 0)))
                 .inner_margin(egui::Margin::same(10.0))
                 .rounding(egui::Rounding::same(5.0))
                 .show(ui, |ui| {
@@ -771,4 +789,12 @@ impl eframe::App for ContextBuilderApp {
             ctx.request_repaint();
         }
     }
+}
+
+/// Canonicalizes a path for comparison purposes, falling back to the input when
+/// canonicalization fails (e.g. the file was just deleted). Used to match file
+/// watcher events against selected paths that may run through different
+/// symlink/junction branches.
+fn canonicalize_or_self(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }

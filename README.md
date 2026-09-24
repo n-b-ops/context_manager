@@ -14,6 +14,7 @@ This Rust version is a rewrite of an original Python project, aiming for improve
 *   **Hierarchical File Tree Display**: View the directory structure in an expandable tree view.
 *   **File Selection**: Interactively select or deselect files and directories for inclusion in the markdown output.
 *   **Configurable Ignore Patterns**: Utilizes `.gitignore` rules by default and allows for additional custom ignore patterns to be entered and applied directly within the GUI, dynamically updating the file tree.
+*   **Symlink / Junction Support**: Scanning follows symbolic links and Windows junctions by default, so files reachable only through a link (e.g. documentation kept outside the project) appear in the tree and the generated document. Link cycles are detected automatically. A "Follow symlinks/junctions" toggle in the Ignore Patterns panel restores the legacy behavior of treating links as plain files.
 *   **Markdown Generation**: Produces a single markdown file containing:
     *   A visualization of the selected project structure.
     *   The full content of all selected files, each in its own code block.
