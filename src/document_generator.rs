@@ -161,10 +161,13 @@ impl DocumentGenerator {
                 // content, otherwise an inner fence would close the wrapper early.
                 let fence_len = markdown_fence_len(&content);
                 let fence = "`".repeat(fence_len);
+                let language = fence_language(file_path);
                 Ok(format!(
-                    "### `{}`\n\n{}markdown\n{}\n{}",
+                    "### `{}`\n\n<!-- file: {} -->\n\n{}{}\n{}\n{}",
+                    display_path,
                     display_path,
                     fence,
+                    language,
                     content,
                     fence
                 ))
@@ -310,10 +313,9 @@ impl DocumentGenerator {
     }
 
     fn get_file_extension(&self, file_path: &Path) -> String {
-        file_path.extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("")
-            .to_string()
+        // AsciiDoc [source, lang] blocks: reuse the markdown language map so both
+        // formats agree and unknown extensions get a safe text fallback.
+        fence_language(file_path).to_string()
     }
 
     pub fn atomic_write_document(&self, output_path: &Path, content: &str) -> Result<()> {
@@ -430,6 +432,41 @@ impl DocumentGenerator {
         }
 
         Ok(())
+    }
+}
+
+/// Maps a file extension to a fence language identifier for markdown code
+/// blocks. Unknown extensions fall back to `text` so no file is ever
+/// mislabelled as a language it is not.
+fn fence_language(file_path: &Path) -> &'static str {
+    match file_path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+        Some("md" | "markdown") => "markdown",
+        Some("py" | "pyi") => "python",
+        Some("rs") => "rust",
+        Some("toml") => "toml",
+        Some("yaml" | "yml") => "yaml",
+        Some("json") => "json",
+        Some("sh" | "bash") => "bash",
+        Some("ps1") => "powershell",
+        Some("js" | "jsx" | "mjs" | "cjs") => "javascript",
+        Some("ts" | "tsx" | "mts" | "cts") => "typescript",
+        Some("c" | "h") => "c",
+        Some("cpp" | "cc" | "hpp" | "hh") => "cpp",
+        Some("cs") => "csharp",
+        Some("go") => "go",
+        Some("java") => "java",
+        Some("kt" | "kts") => "kotlin",
+        Some("rb") => "ruby",
+        Some("php") => "php",
+        Some("swift") => "swift",
+        Some("sql") => "sql",
+        Some("html" | "htm") => "html",
+        Some("css") => "css",
+        Some("xml") => "xml",
+        Some("ini" | "cfg" | "conf") => "ini",
+        Some("proto") => "protobuf",
+        Some("dockerfile") => "dockerfile",
+        _ => "text",
     }
 }
 
@@ -572,6 +609,32 @@ mod tests {
         // Outer fence is longer than any inner run (3) and uses the markdown tag
         assert!(files.contains("\n````markdown\n"), "outer fence must be 4+ backticks");
         assert!(files.ends_with("````"), "outer fence must close the section");
+        // File-boundary marker for grep-based extraction survives rendering
+        assert!(files.contains("<!-- file: docs/adr.md -->"), "marker must precede each file block");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fence_language_maps_extensions_and_falls_back_to_text() {
+        let dir = Path::new("x");
+        assert_eq!(fence_language(&dir.join("a.md")), "markdown");
+        assert_eq!(fence_language(&dir.join("a.py")), "python");
+        assert_eq!(fence_language(&dir.join("a.RS")), "rust", "case-insensitive");
+        assert_eq!(fence_language(&dir.join("a.yaml")), "yaml");
+        assert_eq!(fence_language(&dir.join("a.robot")), "text", "unknown ext falls back");
+        assert_eq!(fence_language(&dir.join("noext")), "text", "no extension falls back");
+    }
+
+    #[test]
+    fn python_file_gets_python_tag_not_markdown() {
+        let root = write_fixture();
+        let generator = DocumentGenerator::new(root.clone(), vec![root.join("src").join("main.rs")]);
+        let files = generator.generate_files_string(OutputFormat::Markdown).unwrap();
+        assert!(
+            files.contains("\n```rust\nfn main() {}"),
+            "rust files must be tagged rust, not markdown; got:\n{}",
+            files
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -612,6 +675,34 @@ mod tests {
     /// nested-backtick filenames, then parse it with pulldown-cmark to prove
     /// the structure holds: one code block per file, no content leakage into
     /// the document outline.
+    /// Renders a fixture with several languages through the real pipeline;
+    /// CB_LANG_ROOT drives it for manual inspection of the final document.
+    #[test]
+    fn dump_language_document_for_review() {
+        let Ok(root) = std::env::var("CB_LANG_ROOT") else {
+            eprintln!("skipping: CB_LANG_ROOT not set");
+            return;
+        };
+        let root = PathBuf::from(root);
+        let tree = crate::file_handler::FileHandler::with_options(root.clone(), true)
+            .unwrap()
+            .scan_directory(vec![])
+            .unwrap();
+        let mut selected = Vec::new();
+        collect_files(&tree, &mut selected);
+        let generator = DocumentGenerator::new(root.clone(), selected);
+        println!("{}", generator.generate_files_string(OutputFormat::Markdown).unwrap());
+    }
+
+    fn collect_files(node: &crate::file_handler::FileNode, out: &mut Vec<PathBuf>) {
+        if !node.is_dir {
+            out.push(node.path.clone());
+        }
+        for child in &node.children {
+            collect_files(child, out);
+        }
+    }
+
     #[test]
     fn full_document_parses_with_commonmark_and_keeps_files_contained() {
         use pulldown_cmark::{Parser, Event, Tag};
