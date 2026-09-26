@@ -1,19 +1,10 @@
-mod constants;
-mod error;
-mod events;
-mod file_handler;
-mod file_monitor;
-mod document_generator;
-mod ui_tree_handler;
-mod app;
-mod cli;
-
 use std::process::ExitCode;
 
 use eframe::NativeOptions;
 use log::info;
 
-use app::ContextBuilderApp;
+use ctxpack::app::ContextBuilderApp;
+use ctxpack::cli;
 
 fn main() -> ExitCode {
     // Initialize logging
