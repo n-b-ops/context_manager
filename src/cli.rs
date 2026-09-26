@@ -1,4 +1,4 @@
-//! Headless CLI frontend for Context Builder.
+//! Headless CLI frontend for CtxPack.
 //!
 //! The GUI (`app.rs`) and this module drive the same core: `FileHandler`
 //! scans a directory into a `FileNode` tree, `DocumentGenerator` renders the
@@ -42,7 +42,7 @@ pub struct CliConfig {
     pub list_only: bool,
 }
 
-const HELP_TEXT: &str = r#"context_builder [OPTIONS] [PATH]
+const HELP_TEXT: &str = r#"ctxpack [OPTIONS] [PATH]
 
 Generate a context document (Markdown or AsciiDoc) from project files,
 headless - no display required. Started without arguments, the GUI opens.
@@ -75,10 +75,10 @@ The output document is never included in itself. Set RUST_LOG=debug for
 verbose logging.
 
 Examples:
-  context_builder --list ~/projects/api
-  context_builder ~/projects/api -o /tmp/context.md
-  context_builder . --include 'src/**/*.rs' --include '*.toml' --stdout
-  context_builder . --watch -f adoc
+  ctxpack --list ~/projects/api
+  ctxpack ~/projects/api -o /tmp/context.md
+  ctxpack . --include 'src/**/*.rs' --include '*.toml' --stdout
+  ctxpack . --watch -f adoc
 "#;
 
 /// Entry point for the CLI frontend. `args` excludes the program name.
@@ -88,7 +88,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
     if args.iter().any(|a| a == "-V" || a == "--version") {
-        println!("context_builder {}", env!("CARGO_PKG_VERSION"));
+        println!("ctxpack {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
