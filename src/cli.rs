@@ -415,25 +415,24 @@ fn run_watch(cfg: CliConfig, mut selected: Vec<PathBuf>, ignore_patterns: Vec<St
     while let Ok(event) = event_receiver.recv() {
         match event {
             AppEvent::FileModifiedDebounced(path) => {
-                // Watcher events arrive under OS-reported absolute paths (notify
-                // joins the cwd when the watch root is relative), while
-                // selections and the generator use the directory exactly as
-                // given. Translate the event back into walker coordinates.
-                let path = to_walker_path(&path, &cfg.directory);
-                // Selections may additionally run through a symlink branch;
-                // compare canonicalized forms, same as the GUI does.
+                // Watcher events arrive under OS-reported absolute paths
+                // (notify joins the cwd when the watch root is relative),
+                // which may differ from the selection's spelling of the same
+                // file through a symlink branch. Match by canonical path and
+                // update EVERY selected spelling: each has its own section in
+                // the document, keyed by its own display path.
                 let changed = canonicalize_or_self(&path);
-                let is_selected = current_selection
-                    .iter()
-                    .any(|s| canonicalize_or_self(s) == changed);
-                if !is_selected {
+                let aliases = aliases_for(&current_selection, &changed);
+                if aliases.is_empty() {
                     debug!("modified path {:?} is not selected; skipping", path);
                     continue;
                 }
                 let generator = DocumentGenerator::new(cfg.directory.clone(), selected.clone());
-                match generator.update_file_section_in_document(&output_path, &path, cfg.format) {
-                    Ok(()) => info!("updated section for {:?}", path),
-                    Err(e) => warn!("section update failed for {:?}: {}", path, e),
+                for alias in aliases {
+                    match generator.update_file_section_in_document(&output_path, &alias, cfg.format) {
+                        Ok(()) => info!("updated section for {:?}", alias),
+                        Err(e) => warn!("section update failed for {:?}: {}", alias, e),
+                    }
                 }
             }
             AppEvent::DirectoryContentChanged => {
@@ -516,18 +515,16 @@ fn canonicalize_or_self(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Translates an OS-reported (absolute) watcher path into the coordinate
-/// system of the scan: rooted at the directory exactly as given on the
-/// command line. Falls back to the raw event path when the file lives
-/// outside the watched directory.
-fn to_walker_path(event_path: &Path, directory: &Path) -> PathBuf {
-    let canon_event = canonicalize_or_self(event_path);
-    let canon_dir = canonicalize_or_self(directory);
-    if let Ok(rel) = canon_event.strip_prefix(&canon_dir) {
-        directory.join(rel)
-    } else {
-        event_path.to_path_buf()
-    }
+/// Selected paths that refer to the same file as `canonical` (an event's
+/// canonicalized path): the plain spelling and/or any symlink-branch
+/// spellings. A change made through any name must refresh the section of
+/// every selected spelling.
+fn aliases_for(selection: &HashSet<PathBuf>, canonical: &Path) -> Vec<PathBuf> {
+    selection
+        .iter()
+        .filter(|s| canonicalize_or_self(s) == canonical)
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -698,6 +695,33 @@ mod tests {
         assert!(doc.contains("### `src/main.rs`"));
         assert!(doc.contains("fn main() {}"));
         assert!(!doc.contains("### `README.md`"), "non-selected files must not appear");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn aliases_for_matches_symlink_branch_spellings() {
+        let root = fixture();
+        if std::os::unix::fs::symlink(root.join("docs"), root.join("docs_link")).is_err() {
+            eprintln!("skipping: no permission to create directory links");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let real = root.join("docs").join("adr.md");
+        let alias = root.join("docs_link").join("adr.md");
+        let mut selection = HashSet::new();
+        selection.insert(real.clone());
+        selection.insert(alias.clone());
+        selection.insert(root.join("src").join("main.rs")); // distractor
+
+        let mut found = aliases_for(&selection, &canonicalize_or_self(&real));
+        found.sort();
+        let mut expected = vec![alias, real];
+        expected.sort();
+        assert_eq!(found, expected, "both spellings of the same file must match");
+
+        let unrelated = aliases_for(&selection, &canonicalize_or_self(&root.join("README.md")));
+        assert!(unrelated.is_empty(), "unrelated files must not match");
         let _ = std::fs::remove_dir_all(&root);
     }
 
