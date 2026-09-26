@@ -1,4 +1,4 @@
-# Context manager
+# CtxPack
 
 A desktop application built with Rust and `egui` to help users select a project directory, view its structure, choose specific files, and generate a comprehensive markdown file. This markdown includes the project's directory layout and the content of the selected files. The application also monitors selected files for changes and automatically updates the markdown.
 
@@ -31,34 +31,34 @@ GUI (`--gui` forces it explicitly).
 
 ```bash
 # One-shot: write <PATH>/project_structure.md (Markdown, all non-ignored files)
-context_builder ~/projects/api
+ctxpack ~/projects/api
 
 # Inspect what would be included after ignore filtering
-context_builder --list ~/projects/api
+ctxpack --list ~/projects/api
 
 # Filter with gitignore-style globs and print to stdout (e.g. for piping)
-context_builder . --include 'src/**/*.rs' --include '*.toml' --stdout
+ctxpack . --include 'src/**/*.rs' --include '*.toml' --stdout
 
 # AsciiDoc output to a specific file
-context_builder . -f adoc -o /tmp/context.adoc
+ctxpack . -f adoc -o /tmp/context.adoc
 
 # Keep running: update the document as files change
 # (file output required; Ctrl-C to stop; writes are atomic)
-context_builder . --watch
+ctxpack . --watch
 ```
 
 Selection model: the CLI selects every file that survives ignore filtering
 (`.gitignore` rules plus the built-in default patterns, adjustable with
 `--ignore` and `--no-default-ignores`), narrowed by `--include` globs — prefix
 a glob with `!` to exclude matches instead. The output document is never
-included in itself. `context_builder --help` lists all flags.
+included in itself. `ctxpack --help` lists all flags.
 
 ## 3. Project Structure
 
 ### 3.1. Directory Layout
 
 ```
-context_builder/
+ctxpack/
 ├── Cargo.toml              # Manages project dependencies and metadata
 ├── README.md               # This file
 ├── src/

@@ -41,12 +41,12 @@ fn main() -> ExitCode {
 }
 
 fn run_gui() -> Result<(), eframe::Error> {
-    info!("Starting Context Builder - Rust Edition (GUI)");
+    info!("Starting CtxPack (GUI)");
 
     let mut options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
-            .with_title("Context Builder - Rust Edition"),
+            .with_title("CtxPack"),
         ..Default::default()
     };
 
@@ -70,7 +70,7 @@ fn run_gui() -> Result<(), eframe::Error> {
     }
 
     eframe::run_native(
-        "Context Builder",
+        "CtxPack",
         options,
         Box::new(|cc| Box::new(ContextBuilderApp::new(cc))),
     )

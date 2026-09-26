@@ -733,7 +733,7 @@ impl eframe::App for ContextBuilderApp {
             ui.vertical_centered(|ui| {
                 ui.add_space(10.0);
                 // Use RichText with heading style for the main title including emoji
-                ui.label(RichText::new("🦀 Context Builder - Rust Edition").heading());
+                ui.label(RichText::new("🦀 CtxPack").heading());
                 ui.weak("Generate markdown documentation from your project files");
                 ui.add_space(10.0);
             });
