@@ -8,44 +8,16 @@ use egui_twemoji::EmojiLabel;
 use egui::RichText;
 use egui_extras;
 
-use crate::constants::{UI_STATUS_MESSAGE_DURATION, OutputFormat, DEFAULT_OUTPUT_FORMAT, DEFAULT_OUTPUT_FILENAME_BASE};
+use crate::constants::{
+    UI_STATUS_MESSAGE_DURATION, OutputFormat, DEFAULT_OUTPUT_FORMAT, DEFAULT_OUTPUT_FILENAME_BASE,
+    DEFAULT_IGNORE_PATTERNS_ARRAY,
+};
 use crate::error::Result;
 use crate::events::AppEvent;
 use crate::file_handler::{FileHandler, FileNode};
 use crate::file_monitor::FileMonitor;
 use crate::document_generator::DocumentGenerator;
 use crate::ui_tree_handler::UITreeHandler;
-
-// Initial default ignore patterns
-const DEFAULT_IGNORE_PATTERNS_ARRAY: &[&str] = &[
-    // Common VCS and build artifacts
-    ".git/", ".hg/", ".svn/",
-    "target/", "build/", "dist/", "pkg/", "node_modules/",
-    // Python specific
-    "__pycache__/", "*.pyc", "*.pyo", "*.pyd",
-    ".env", ".venv", "venv/", "env/",
-    // "requirements.txt", // Often useful to see, but can be configured if user wants it ignored
-    // Node specific
-    "package-lock.json", "yarn.lock",
-    // Common OS files
-    ".DS_Store", "Thumbs.db",
-    // Log files
-    "*.log",
-    // Temporary files
-    "*.tmp", "*.swp", "*.swo",
-    // Compiled outputs & binaries from various languages/tools
-    "*.o", "*.so", "*.a", "*.dylib",
-    "*.exe", "*.dll", "*.lib", "*.exp", "*.obj", "*.def",
-    // Archives & compressed files
-    "*.zip", "*.tar", "*.gz", "*.rar",
-    // Image/Media (usually not context for code)
-    "*.ico", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.tiff", "*.svg",
-    "*.mp3", "*.mp4", "*.avi",
-    // Database files
-    "*.db", "*.sqlite", "*.sqlite3",
-    // IDE specific
-    ".idea/", ".vscode/", "*.sublime-project", "*.sublime-workspace",
-];
 
 pub struct ContextBuilderApp {
     // Core state

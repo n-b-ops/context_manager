@@ -21,6 +21,37 @@ This Rust version is a rewrite of an original Python project, aiming for improve
 *   **Automatic Markdown Updates**: Monitors the selected project directory for changes (creation, modification, deletion) and automatically regenerates the relevant sections in the markdown file, ensuring the context remains up-to-date. If the directory structure changes (files/folders added or removed), the application will re-scan the directory and update the displayed file tree.
 *   **Status Feedback**: Provides UI feedback for ongoing operations (loading, generating) and success/error messages.
 *   **Cross-Platform**: Built with `eframe`, enabling compilation for Windows, macOS, and Linux.
+*   **Headless CLI**: The same binary doubles as a CLI for non-graphical environments (remote SSH sessions, CI, containers); see [CLI Usage](#cli-usage-headless-frontend) below.
+
+## CLI Usage (Headless Frontend)
+
+The GUI and the CLI share the same core (scanning, generation, watching); any
+command-line argument selects the CLI, while a bare invocation still opens the
+GUI (`--gui` forces it explicitly).
+
+```bash
+# One-shot: write <PATH>/project_structure.md (Markdown, all non-ignored files)
+context_builder ~/projects/api
+
+# Inspect what would be included after ignore filtering
+context_builder --list ~/projects/api
+
+# Filter with gitignore-style globs and print to stdout (e.g. for piping)
+context_builder . --include 'src/**/*.rs' --include '*.toml' --stdout
+
+# AsciiDoc output to a specific file
+context_builder . -f adoc -o /tmp/context.adoc
+
+# Keep running: update the document as files change
+# (file output required; Ctrl-C to stop; writes are atomic)
+context_builder . --watch
+```
+
+Selection model: the CLI selects every file that survives ignore filtering
+(`.gitignore` rules plus the built-in default patterns, adjustable with
+`--ignore` and `--no-default-ignores`), narrowed by `--include` globs — prefix
+a glob with `!` to exclude matches instead. The output document is never
+included in itself. `context_builder --help` lists all flags.
 
 ## 3. Project Structure
 

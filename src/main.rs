@@ -6,18 +6,42 @@ mod file_monitor;
 mod document_generator;
 mod ui_tree_handler;
 mod app;
+mod cli;
+
+use std::process::ExitCode;
 
 use eframe::NativeOptions;
 use log::info;
+
 use app::ContextBuilderApp;
 
-fn main() -> Result<(), eframe::Error> {
+fn main() -> ExitCode {
     // Initialize logging
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .init();
-    
-    info!("Starting Context Builder - Rust Edition");
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Frontend dispatch: a bare invocation (or an explicit --gui) starts the
+    // desktop interface as before; any other argument runs the headless CLI,
+    // which works over SSH and other non-graphical environments.
+    let want_gui = args.is_empty() || args.iter().any(|a| a == "--gui");
+    if want_gui {
+        if let Err(e) = run_gui() {
+            eprintln!("GUI error: {}", e);
+            return ExitCode::FAILURE;
+        }
+    } else if let Err(e) = cli::run(args) {
+        eprintln!("error: {}", e);
+        return ExitCode::FAILURE;
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn run_gui() -> Result<(), eframe::Error> {
+    info!("Starting Context Builder - Rust Edition (GUI)");
 
     let mut options = NativeOptions {
         viewport: egui::ViewportBuilder::default()

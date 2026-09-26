@@ -64,26 +64,36 @@ impl DocumentGenerator {
         Ok(())
     }
 
+    /// Renders the directory tree lines for the current selection — no
+    /// section header, no code fence. The CLI `--list` mode prints these
+    /// directly; the markdown structure section wraps the same lines in a
+    /// fence.
+    pub fn generate_tree_lines(&self, root_node: &FileNode) -> Result<String> {
+        let mut structure_lines = String::new();
+        let mut is_last_child_stack = Vec::new();
+
+        self.build_structure_string_recursive(
+            root_node,
+            &self.directory,
+            &Path::new(""),
+            0,
+            &mut is_last_child_stack,
+            &mut structure_lines,
+            OutputFormat::Markdown,
+        )?;
+
+        Ok(structure_lines)
+    }
+
     pub fn generate_structure_string(&self, root_node: &FileNode, format: OutputFormat) -> Result<String> {
         let mut structure_content = String::new();
 
         match format {
             OutputFormat::Markdown => {
                 structure_content.push_str(&format!("{}\n", MARKDOWN_HEADER_STRUCTURE));
-                
-                let mut structure_lines = String::new();
-                let mut is_last_child_stack = Vec::new();
-                
-                self.build_structure_string_recursive(
-                    root_node,
-                    &self.directory,
-                    &Path::new(""),
-                    0,
-                    &mut is_last_child_stack,
-                    &mut structure_lines,
-                    format
-                )?;
-                
+
+                let structure_lines = self.generate_tree_lines(root_node)?;
+
                 // Filenames may contain backticks, so size the fence dynamically here
                 // too (plain "text" language keeps renderers from guessing).
                 let fence_len = markdown_fence_len(&structure_lines);
